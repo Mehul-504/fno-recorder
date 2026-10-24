@@ -1,0 +1,55 @@
+name: record
+# Times are UTC. IST = UTC + 5:30. Each part has a backup trigger because GitHub's
+# scheduler can start jobs late; a duplicate run waits its turn and exits at once.
+on:
+  schedule:
+    - cron: "0 3 * * 1-5"     # 08:30 IST  part a (09:15 -> 12:45)
+    - cron: "30 3 * * 1-5"    # 09:00 IST  part a backup
+    - cron: "0 6 * * 1-5"     # 11:30 IST  part b (-> 15:35)
+    - cron: "40 6 * * 1-5"    # 12:10 IST  part b backup
+    - cron: "0 14 * * 1-5"    # 19:30 IST  evening files
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "a, b, evening or once"
+        required: true
+        default: "a"
+
+permissions:
+  contents: write
+
+jobs:
+  record:
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    concurrency:
+      group: record-${{ github.event.inputs.mode || (startsWith(github.event.schedule, '0 3') || startsWith(github.event.schedule, '30 3')) && 'a' || (startsWith(github.event.schedule, '0 6') || startsWith(github.event.schedule, '40 6')) && 'b' || 'evening' }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Which part
+        id: part
+        run: |
+          s="${{ github.event.schedule }}"; m="${{ github.event.inputs.mode }}"
+          if [ -n "$m" ]; then part="$m"
+          elif [ "$s" = "0 3 * * 1-5" ] || [ "$s" = "30 3 * * 1-5" ]; then part=a
+          elif [ "$s" = "0 6 * * 1-5" ] || [ "$s" = "40 6 * * 1-5" ]; then part=b
+          else part=evening; fi
+          echo "part=$part" >> "$GITHUB_OUTPUT"
+      - name: Record
+        env:
+          DATA_KEY: ${{ secrets.DATA_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          git config user.name "fno-recorder"
+          git config user.email "123734666+Mehul-504@users.noreply.github.com"
+          case "${{ steps.part.outputs.part }}" in
+            a) python recorder.py session --tag a --until 12:45 ;;
+            b) python recorder.py session --tag b --until 15:35 ;;
+            once) python recorder.py once ;;
+            *) python recorder.py evening ;;
+          esac

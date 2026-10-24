@@ -1,2 +1,4 @@
 fno/secrets.json
 __pycache__/
+data/
+*.key
